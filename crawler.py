@@ -244,6 +244,150 @@ def discover_property_links(result: Any, source: Source) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+
+SEARCH_PAGE_EXTRACTION_SOURCES = {"zap", "vivareal", "imovelweb"}
+
+
+def _search_page_links(result: Any, source: Source) -> list[str]:
+    return discover_property_links(result, source)
+
+
+def _search_page_url(result: Any, links: list[str], index: int) -> str:
+    if index < len(links):
+        return links[index]
+    return getattr(result, "url", "") or ""
+
+
+def _extract_zap_viva_search_page(
+    result: Any,
+    source: Source,
+    city: str,
+    state: str,
+) -> list[PropertyListing]:
+    markdown = _markdown_text(getattr(result, "markdown", ""))
+    # Remove apenas a sintaxe dos links para deixar o texto dos cards mais previsível.
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", markdown)
+    links = _search_page_links(result, source)
+    escaped_city = re.escape(city)
+
+    pattern = re.compile(
+        rf"(?P<title>(?:Lote/Terreno|Terreno)[^\n]{{0,220}}?)"
+        rf"\s+em\s+R\$\s*(?P<price>[\d.]+(?:,\d{{1,2}})?)"
+        rf"(?P<meta>[\s\S]{{0,320}}?)"
+        rf"Tamanho do imóvel\s+(?P<area>[\d.,]+)\s*m²"
+        rf"(?P<neighborhood>[^,\n]{{2,80}}),\s*{escaped_city}"
+        rf"(?:\s+(?P<address>[^\n]{{2,180}}?))?"
+        rf"(?=Contatar|\n|$)",
+        re.I,
+    )
+
+    listings: list[PropertyListing] = []
+    for index, match in enumerate(pattern.finditer(text)):
+        meta = match.group("meta") or ""
+        address = clean_text(match.group("address"))
+        if address:
+            address = re.sub(r"\s*Contatar\s*$", "", address, flags=re.I).strip()
+        listing = PropertyListing(
+            source=source.name,
+            url=_search_page_url(result, links, index),
+            city=city,
+            state=state.upper(),
+            title=clean_text(match.group("title")),
+            price=parse_brl(match.group("price")),
+            area_m2=parse_area_m2(match.group("area")),
+            neighborhood=clean_text(match.group("neighborhood")),
+            address=address,
+            condominium=_extract_optional_money(meta, "Cond."),
+            iptu=_extract_optional_money(meta, "IPTU"),
+            raw={"origin": "search_page", "status_code": getattr(result, "status_code", None)},
+        ).finalize()
+        if listing.price and listing.area_m2:
+            listings.append(listing)
+    return listings
+
+
+def _extract_imovelweb_search_page(
+    result: Any,
+    source: Source,
+    city: str,
+    state: str,
+) -> list[PropertyListing]:
+    markdown = _markdown_text(getattr(result, "markdown", ""))
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", markdown)
+    links = _search_page_links(result, source)
+    price_heading = re.compile(r"^##\s*R\$\s*([\d.]+(?:,\d{1,2})?)\s*$", re.M)
+    price_matches = list(price_heading.finditer(text))
+    listings: list[PropertyListing] = []
+
+    for index, price_match in enumerate(price_matches):
+        end = price_matches[index + 1].start() if index + 1 < len(price_matches) else min(
+            len(text), price_match.end() + 1800
+        )
+        block = text[price_match.end():end]
+        area_match = re.search(r"###\s*([\d.,]+)\s*m²\s*tot\.", block, re.I)
+        if not area_match:
+            continue
+
+        before = text[max(0, price_match.start() - 350):price_match.start()]
+        lines = [line.strip() for line in before.splitlines() if line.strip()]
+        title = None
+        for line in reversed(lines):
+            if " · " in line:
+                title = line.split(" · ", 1)[1].strip()
+                break
+            if (
+                not line.startswith("#")
+                and not line.lower().startswith("image")
+                and len(line) > 8
+            ):
+                title = line
+                break
+
+        headings = re.findall(r"^####\s*(.+?)\s*$", block, re.M)
+        address = clean_text(headings[0]) if headings else None
+        neighborhood = None
+        for heading in headings[1:]:
+            match = re.match(rf"(.+?),\s*{re.escape(city)}\b", heading, re.I)
+            if match:
+                neighborhood = clean_text(match.group(1))
+                break
+
+        condo_match = re.search(
+            r"##\s*R\$\s*([\d.]+(?:,\d{1,2})?)\s+Condominio",
+            block,
+            re.I,
+        )
+        listing = PropertyListing(
+            source=source.name,
+            url=_search_page_url(result, links, index),
+            city=city,
+            state=state.upper(),
+            title=clean_text(title),
+            price=parse_brl(price_match.group(1)),
+            area_m2=parse_area_m2(area_match.group(1)),
+            neighborhood=neighborhood,
+            address=address,
+            condominium=parse_brl(condo_match.group(1)) if condo_match else None,
+            raw={"origin": "search_page", "status_code": getattr(result, "status_code", None)},
+        ).finalize()
+        if listing.price and listing.area_m2:
+            listings.append(listing)
+    return listings
+
+
+def extract_search_page_listings(
+    result: Any,
+    source: Source,
+    city: str,
+    state: str,
+) -> list[PropertyListing]:
+    if source.name in {"zap", "vivareal"}:
+        return _extract_zap_viva_search_page(result, source, city, state)
+    if source.name == "imovelweb":
+        return _extract_imovelweb_search_page(result, source, city, state)
+    return []
+
+
 def _extract_jsonld(html: str) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     pattern = r'''<script[^>]+type=["']application/ld\+json["'][^>]*>(.*?)</script>'''
@@ -423,11 +567,7 @@ CREATE TABLE IF NOT EXISTS listings (
 
 def deduplicate(listings: Iterable[PropertyListing]) -> list[PropertyListing]:
     best: dict[str, PropertyListing] = {}
-    seen_urls: set[str] = set()
     for listing in listings:
-        if listing.url in seen_urls:
-            continue
-        seen_urls.add(listing.url)
         current = best.get(listing.fingerprint)
         if current is None or listing.quality_score > current.quality_score:
             best[listing.fingerprint] = listing
@@ -518,6 +658,7 @@ async def crawl_city(city: str, state: str, sources: list[Source], pages: int, p
                 source_run.errors.append(f"listing pages: {exc}")
                 continue
             discovered: list[str] = []
+            direct_fingerprints: set[str] = set()
             for result in results:
                 if not result.success:
                     source_run.failed += 1
@@ -526,16 +667,56 @@ async def crawl_city(city: str, state: str, sources: list[Source], pages: int, p
                         source_run.skipped_by_robots += 1
                     source_run.errors.append(f"{result.url}: {message}")
                     continue
+
                 discovered.extend(discover_property_links(result, source))
+
+                # ZAP, Viva Real e Imovelweb já expõem preço/área/localização
+                # nos cards da página de busca. Preferimos esses dados e só
+                # abrimos páginas individuais para completar o que faltar.
+                if (
+                    source.name in SEARCH_PAGE_EXTRACTION_SOURCES
+                    and source_run.successful < per_source_limit
+                ):
+                    try:
+                        page_listings = extract_search_page_listings(
+                            result, source, city, state
+                        )
+                    except Exception as exc:
+                        source_run.errors.append(
+                            f"{result.url}: search-page extraction: {exc}"
+                        )
+                        page_listings = []
+
+                    for listing in page_listings:
+                        if source_run.successful >= per_source_limit:
+                            break
+                        if listing.fingerprint in direct_fingerprints:
+                            continue
+                        direct_fingerprints.add(listing.fingerprint)
+                        report.listings.append(listing)
+                        source_run.successful += 1
+
             source_run.discovered_urls = list(dict.fromkeys(discovered))[: max(1, per_source_limit)]
+            if (
+                source.name in SEARCH_PAGE_EXTRACTION_SOURCES
+                and source_run.successful == 0
+            ):
+                source_run.errors.append(
+                    "search page loaded, but no structured cards were extracted"
+                )
 
         # Processa anúncios em pequenos lotes e alterna as fontes. Isso evita
         # disparar 20–30 páginas seguidas contra o mesmo portal.
         batch_size = min(5, max(1, per_source_limit))
+        detail_urls_by_source: dict[str, list[str]] = {}
+        for source_run in report.sources:
+            remaining = max(0, per_source_limit - source_run.successful)
+            detail_urls_by_source[source_run.source] = source_run.discovered_urls[:remaining]
+
         max_batches = max(
             (
-                (len(source_run.discovered_urls) + batch_size - 1) // batch_size
-                for source_run in report.sources
+                (len(urls) + batch_size - 1) // batch_size
+                for urls in detail_urls_by_source.values()
             ),
             default=0,
         )
@@ -543,7 +724,8 @@ async def crawl_city(city: str, state: str, sources: list[Source], pages: int, p
         for batch_index in range(max_batches):
             for source, source_run in zip(sources, report.sources):
                 start = batch_index * batch_size
-                batch = source_run.discovered_urls[start:start + batch_size]
+                detail_urls = detail_urls_by_source[source.name]
+                batch = detail_urls[start:start + batch_size]
                 if not batch:
                     continue
                 try:
