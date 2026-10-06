@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Crawler multi-fonte de terrenos para o AnalisaImóvel">
+  <title>Multi Source Crawler — Radar de Terrenos</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 44 44"><path d="M8 30.5 22 8l14 22.5-14 5.5L8 30.5Z"></path><path class="brand-line" d="m13 28 9-14 9 14-9 3.5L13 28Z"></path></svg>
+        </span>
+        <span><strong>Multi Source Crawler</strong><small>Coleta imobiliária para o AnalisaImóvel</small></span>
+      </a>
+      <div class="topbar-meta"><span class="status-dot"></span><span id="system-status">Pronto para pesquisar</span></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">RADAR MULTI-FONTE · TERRENOS</div>
+          <h1>Procure em vários portais com <span>uma única busca.</span></h1>
+          <p>Informe cidade e estado. O crawler consulta fontes públicas, reúne anúncios, normaliza preço e área, remove duplicidades e calcula preço por metro quadrado.</p>
+        </div>
+        <div class="hero-badge"><span>Powered by</span><strong>Crawl4AI</strong></div>
+      </section>
+
+      <section class="warning-card">
+        <div class="warning-icon">i</div>
+        <div><strong>Coleta de anúncios públicos</strong><p>Os valores são preços anunciados, não preços de transação. Portais podem limitar automação, ocultar localização exata ou bloquear páginas conforme suas políticas.</p></div>
+      </section>
+
+      <section class="panel search-panel">
+        <div class="panel-heading">
+          <div><span class="section-kicker">Nova varredura</span><h2>Onde você quer procurar terrenos?</h2></div>
+          <span class="microcopy">robots.txt respeitado por padrão</span>
+        </div>
+
+        <form id="crawl-form" class="search-form">
+          <label class="field"><span>Cidade</span><input id="city" value="Vinhedo" placeholder="Ex.: Vinhedo" required></label>
+          <label class="field"><span>Estado</span><select id="state">
+            <option value="SP" selected>São Paulo — SP</option><option value="MG">Minas Gerais — MG</option>
+            <option value="RJ">Rio de Janeiro — RJ</option><option value="PR">Paraná — PR</option>
+            <option value="SC">Santa Catarina — SC</option><option value="RS">Rio Grande do Sul — RS</option>
+            <option value="GO">Goiás — GO</option><option value="DF">Distrito Federal — DF</option>
+          </select></label>
+          <label class="field"><span>Limite por fonte</span><select id="limit"><option value="5">5 · teste rápido</option><option value="10" selected>10 · recomendado</option><option value="20">20</option><option value="30">30</option></select></label>
+          <label class="field"><span>Páginas por fonte</span><select id="pages"><option value="1" selected>1 página</option><option value="2">2 páginas</option><option value="3">3 páginas</option></select></label>
+
+          <div class="sources-field">
+            <span>Fontes</span>
+            <div class="source-options">
+              <label><input type="checkbox" name="source" value="zap" checked><span>ZAP</span></label>
+              <label><input type="checkbox" name="source" value="vivareal" checked><span>Viva Real</span></label>
+              <label><input type="checkbox" name="source" value="imovelweb" checked><span>Imovelweb</span></label>
+              <label><input type="checkbox" name="source" value="chavesnamao" checked><span>Chaves na Mão</span></label>
+              <label><input type="checkbox" name="source" value="olx"><span>OLX <small>beta</small></span></label>
+            </div>
+          </div>
+
+          <button class="button primary search-button" id="search-button" type="submit"><span>Iniciar varredura</span><span class="button-spinner"></span></button>
+        </form>
+      </section>
+
+      <section id="loading-panel" class="panel loading-panel hidden">
+        <div class="scan-ring"><span></span></div>
+        <div><span class="section-kicker">Coletando dados</span><h2>Consultando portais imobiliários…</h2><p>O navegador automatizado está encontrando anúncios e normalizando os dados.</p></div>
+      </section>
+
+      <section id="results-area" class="results-area hidden">
+        <div class="summary-grid">
+          <article class="metric-card"><span>Terrenos válidos</span><strong id="metric-listings">—</strong><small>após deduplicação</small></article>
+          <article class="metric-card"><span>Preço mediano</span><strong id="metric-price">—</strong><small>dos anúncios coletados</small></article>
+          <article class="metric-card"><span>Preço/m² mediano</span><strong id="metric-ppm2">—</strong><small>base observada</small></article>
+          <article class="metric-card"><span>Fontes com resultado</span><strong id="metric-sources">—</strong><small>portais retornando dados</small></article>
+        </div>
+
+        <section class="panel source-panel">
+          <div class="panel-heading compact"><div><span class="section-kicker">Saúde das fontes</span><h2>Como cada portal respondeu?</h2></div><span id="result-location" class="location-badge">—</span></div>
+          <div id="source-status-grid" class="source-status-grid"></div>
+        </section>
+
+        <section class="panel listings-panel">
+          <div class="panel-heading compact"><div><span class="section-kicker">Base consolidada</span><h2>Terrenos encontrados</h2></div><button id="sort-ppm2" class="button secondary small" type="button">Ordenar por R$/m²</button></div>
+          <div id="listings-empty" class="empty-state hidden">Nenhum anúncio com preço e área suficientes foi encontrado nesta varredura.</div>
+          <div id="listings-grid" class="listings-grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <footer><span>Multi Source Crawler · protótipo local</span><span>Interface baseada na identidade visual do Terraly</span></footer>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

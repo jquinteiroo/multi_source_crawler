@@ -94,3 +94,33 @@ Por padrão o crawler:
 ## Limitações da v0.1
 
 A arquitetura já é multi-source, mas sites podem mudar HTML, paginação ou proteções. A próxima etapa é usar a saída real do seu teste para criar adaptadores específicos onde o extrator genérico falhar.
+
+
+## Interface web inspirada no Terraly
+
+A branch também possui uma interface local em HTML/CSS/JS, usando a mesma linguagem visual do Terraly.
+
+Depois de instalar as dependências e executar o `crawl4ai-setup`, inicie:
+
+```powershell
+.\.venv\Scripts\python.exe server.py
+```
+
+Abra no navegador:
+
+```text
+http://127.0.0.1:8000
+```
+
+Na tela você pode:
+
+- informar cidade e UF;
+- selecionar as fontes;
+- definir limite de anúncios e número de páginas;
+- iniciar a varredura sem usar o terminal;
+- acompanhar a saúde de cada portal;
+- ver quantidade de terrenos válidos;
+- ver preço mediano e preço/m² mediano;
+- visualizar os anúncios consolidados e abrir a fonte original.
+
+Os resultados continuam sendo gravados em `data/listings.json`, `data/listings.csv` e `data/listings.sqlite3`.
