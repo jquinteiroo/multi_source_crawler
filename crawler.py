@@ -485,9 +485,25 @@ async def crawl_city(city: str, state: str, sources: list[Source], pages: int, p
         stream=False,
         page_timeout=60_000,
     )
-    dispatcher = SemaphoreDispatcher(
-        max_session_permit=max(1, min(concurrency, 8)),
-        rate_limiter=RateLimiter(base_delay=(1.0, 2.0), max_delay=10.0, max_retries=2, rate_limit_codes=[429, 503]),
+    listing_dispatcher = SemaphoreDispatcher(
+        max_session_permit=max(1, min(concurrency, 3)),
+        rate_limiter=RateLimiter(
+            base_delay=(1.0, 2.0),
+            max_delay=10.0,
+            max_retries=2,
+            rate_limit_codes=[429, 503],
+        ),
+    )
+    # Páginas de detalhe são mais sensíveis a rate limiting. Mantemos baixa
+    # concorrência e pausas maiores para não pressionar um mesmo domínio.
+    detail_dispatcher = SemaphoreDispatcher(
+        max_session_permit=max(1, min(concurrency, 2)),
+        rate_limiter=RateLimiter(
+            base_delay=(2.0, 4.0),
+            max_delay=20.0,
+            max_retries=3,
+            rate_limit_codes=[429, 503],
+        ),
     )
     report = CrawlReport()
     async with AsyncWebCrawler(config=browser_config) as crawler:
@@ -496,7 +512,7 @@ async def crawl_city(city: str, state: str, sources: list[Source], pages: int, p
             source_run.search_urls = [source.search_url(city, state, page) for page in range(1, max(1, pages) + 1)]
             report.sources.append(source_run)
             try:
-                results = await crawler.arun_many(source_run.search_urls, config=run_config, dispatcher=dispatcher)
+                results = await crawler.arun_many(source_run.search_urls, config=run_config, dispatcher=listing_dispatcher)
             except Exception as exc:
                 source_run.failed += len(source_run.search_urls)
                 source_run.errors.append(f"listing pages: {exc}")
@@ -513,35 +529,65 @@ async def crawl_city(city: str, state: str, sources: list[Source], pages: int, p
                 discovered.extend(discover_property_links(result, source))
             source_run.discovered_urls = list(dict.fromkeys(discovered))[: max(1, per_source_limit)]
 
-        for source, source_run in zip(sources, report.sources):
-            if not source_run.discovered_urls:
-                continue
-            try:
-                results = await crawler.arun_many(source_run.discovered_urls, config=run_config, dispatcher=dispatcher)
-            except Exception as exc:
-                source_run.failed += len(source_run.discovered_urls)
-                source_run.errors.append(f"property pages: {exc}")
-                continue
-            for result in results:
-                if not result.success:
-                    source_run.failed += 1
-                    message = result.error_message or f"HTTP {result.status_code}"
-                    if "robots.txt" in message.lower():
-                        source_run.skipped_by_robots += 1
-                    source_run.errors.append(f"{result.url}: {message}")
+        # Processa anúncios em pequenos lotes e alterna as fontes. Isso evita
+        # disparar 20–30 páginas seguidas contra o mesmo portal.
+        batch_size = min(5, max(1, per_source_limit))
+        max_batches = max(
+            (
+                (len(source_run.discovered_urls) + batch_size - 1) // batch_size
+                for source_run in report.sources
+            ),
+            default=0,
+        )
+
+        for batch_index in range(max_batches):
+            for source, source_run in zip(sources, report.sources):
+                start = batch_index * batch_size
+                batch = source_run.discovered_urls[start:start + batch_size]
+                if not batch:
                     continue
                 try:
-                    listing = extract_property(result, source, city, state)
+                    results = await crawler.arun_many(
+                        batch,
+                        config=run_config,
+                        dispatcher=detail_dispatcher,
+                    )
                 except Exception as exc:
-                    source_run.failed += 1
-                    source_run.errors.append(f"{result.url}: extraction: {exc}")
+                    source_run.failed += len(batch)
+                    source_run.errors.append(f"property pages batch {batch_index + 1}: {exc}")
+                    await asyncio.sleep(1.5)
                     continue
-                if not listing.price or not listing.area_m2:
-                    source_run.failed += 1
-                    source_run.errors.append(f"{result.url}: missing critical price/area")
-                    continue
-                source_run.successful += 1
-                report.listings.append(listing)
+
+                for result in results:
+                    if not result.success:
+                        source_run.failed += 1
+                        message = result.error_message or f"HTTP {result.status_code}"
+                        if "robots.txt" in message.lower():
+                            source_run.skipped_by_robots += 1
+                        source_run.errors.append(f"{result.url}: {message}")
+                        continue
+                    try:
+                        listing = extract_property(result, source, city, state)
+                    except Exception as exc:
+                        source_run.failed += 1
+                        source_run.errors.append(f"{result.url}: extraction: {exc}")
+                        continue
+                    if not listing.price or not listing.area_m2:
+                        source_run.failed += 1
+                        missing = []
+                        if not listing.price:
+                            missing.append("preço")
+                        if not listing.area_m2:
+                            missing.append("área")
+                        source_run.errors.append(
+                            f"{result.url}: missing critical {'/'.join(missing)}"
+                        )
+                        continue
+                    source_run.successful += 1
+                    report.listings.append(listing)
+
+                # Pequena pausa entre lotes para reduzir a chance de bloqueio.
+                await asyncio.sleep(1.5)
     return report
 
 
@@ -552,7 +598,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sources", default="", help=f"Separadas por vírgula. Disponíveis: {', '.join(SOURCES)}")
     parser.add_argument("--pages", type=int, default=1)
     parser.add_argument("--limit", type=int, default=20)
-    parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--output", default="data")
     parser.add_argument("--ignore-robots", action="store_true", help="Desativa robots.txt (não recomendado).")
     return parser
