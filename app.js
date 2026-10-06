@@ -45,6 +45,16 @@ function renderSummary(data){
 function renderSources(sources){
   sourceStatusGrid.innerHTML=sources.map(source=>{
     const state=source.successful>0?"ok":source.failed>0?"bad":"warn";
+    const rawError=(source.errors&&source.errors.length)?source.errors[0]:"";
+    let reason="";
+    if(rawError.includes("HTTP 403"))reason="Acesso limitado pelo portal";
+    else if(rawError.includes("HTTP 429"))reason="Muitas requisições";
+    else if(rawError.includes("HTTP 503"))reason="Portal temporariamente indisponível";
+    else if(rawError.includes("robots.txt"))reason="Bloqueado pelo robots.txt";
+    else if(rawError.includes("missing critical preço/área"))reason="Preço e área não identificados";
+    else if(rawError.includes("missing critical preço"))reason="Preço não identificado";
+    else if(rawError.includes("missing critical área"))reason="Área não identificada";
+    else if(rawError)reason="Falha de coleta ou extração";
     return `<article class="source-card">
       <div class="source-card-top"><span class="source-name">${escapeHtml(label(source.source))}</span><span class="source-state ${state}"></span></div>
       <div class="source-stats">
@@ -53,6 +63,7 @@ function renderSources(sources){
         <div><span>Falhas</span><strong>${source.failed}</strong></div>
         <div><span>Robots</span><strong>${source.skipped_by_robots}</strong></div>
       </div>
+      ${reason?`<div class="source-error" title="${escapeHtml(rawError)}">${escapeHtml(reason)}</div>`:""}
     </article>`;
   }).join("");
 }
