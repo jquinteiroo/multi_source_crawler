@@ -81,7 +81,7 @@ class CrawlerUIHandler(SimpleHTTPRequestHandler):
                 sources=selected,
                 pages=pages,
                 per_source_limit=limit,
-                concurrency=4,
+                concurrency=2,
                 respect_robots=True,
             )
         )
